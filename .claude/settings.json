@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File agent/session-start.ps1",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

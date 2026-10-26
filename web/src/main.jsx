@@ -8,7 +8,7 @@ createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <div className="h-full">
       <App />
-      <Toaster theme="dark" richColors position="bottom-right" />
+      <Toaster theme="system" richColors position="bottom-right" />
     </div>
   </React.StrictMode>,
 )

@@ -19,6 +19,7 @@ type Feedback struct {
 	ID        int64  `json:"id"`
 	TicketID  *int64 `json:"ticketId"` // optional link to the session's ticket
 	Agent     string `json:"agent"`
+	Audience  string `json:"audience"` // "agent" (agent ergonomics) or "user" (UX/UI)
 	Summary   string `json:"summary"`
 	Content   string `json:"content"`
 	Rating    *int64 `json:"rating"` // optional 1-5
@@ -27,9 +28,9 @@ type Feedback struct {
 
 // requestFeedbackHint is attached to ticket responses when it is a natural
 // point in the agent's session to give feedback.
-const requestFeedbackHint = "Kanban board suggestion: now is a good moment to submit feedback — POST /api/v1/feedback with {agent, summary, content, rating(1-5), ticketId} describing anything that could improve this platform (missing fields, API ergonomics, UI, workflow). Optional."
+const requestFeedbackHint = "Kanban board suggestion: now is a good moment to submit feedback — POST /api/v1/feedback with {agent, audience, summary, content, rating(1-5), ticketId}. audience must be \"agent\" for API/workflow ergonomics or \"user\" for UI/UX suggestions. Optional."
 
-var feedbackFieldNames = []string{"agent", "summary", "content", "rating", "ticketId"}
+var feedbackFieldNames = []string{"agent", "audience", "summary", "content", "rating", "ticketId"}
 
 // --- store ----------------------------------------------------------------
 
@@ -43,9 +44,9 @@ func (s *store) insertFeedback(ctx context.Context, f *Feedback) error {
 		rating = *f.Rating
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO feedback (ticket_id, agent, summary, content, rating, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		ticketID, f.Agent, f.Summary, f.Content, rating, f.CreatedAt)
+		`INSERT INTO feedback (ticket_id, agent, audience, summary, content, rating, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		ticketID, f.Agent, f.Audience, f.Summary, f.Content, rating, f.CreatedAt)
 	if err != nil {
 		return err
 	}
@@ -53,18 +54,22 @@ func (s *store) insertFeedback(ctx context.Context, f *Feedback) error {
 	return err
 }
 
-func (s *store) listFeedback(ctx context.Context, agent string, ticket *int64, limit int) ([]Feedback, error) {
+func (s *store) listFeedback(ctx context.Context, agent, audience string, ticket *int64, limit int) ([]Feedback, error) {
 	var where []string
 	var args []any
 	if agent != "" {
 		where = append(where, "agent = ?")
 		args = append(args, agent)
 	}
+	if audience != "" {
+		where = append(where, "audience = ?")
+		args = append(args, audience)
+	}
 	if ticket != nil {
 		where = append(where, "ticket_id = ?")
 		args = append(args, *ticket)
 	}
-	query := "SELECT id, ticket_id, agent, summary, content, rating, created_at FROM feedback"
+	query := "SELECT id, ticket_id, agent, audience, summary, content, rating, created_at FROM feedback"
 	if len(where) > 0 {
 		query += " WHERE " + joinAND(where)
 	}
@@ -81,7 +86,7 @@ func (s *store) listFeedback(ctx context.Context, agent string, ticket *int64, l
 	for rows.Next() {
 		var f Feedback
 		var ticketID, rating sql.NullInt64
-		if err := rows.Scan(&f.ID, &ticketID, &f.Agent, &f.Summary, &f.Content, &rating, &f.CreatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &ticketID, &f.Agent, &f.Audience, &f.Summary, &f.Content, &rating, &f.CreatedAt); err != nil {
 			return nil, err
 		}
 		if ticketID.Valid {
@@ -117,11 +122,24 @@ func (s *server) handleCreateFeedback(w http.ResponseWriter, r *http.Request) {
 	f := &Feedback{}
 
 	if err := setStringFields(fields, f, map[string]*string{
-		"agent":   &f.Agent,
-		"summary": &f.Summary,
-		"content": &f.Content,
+		"agent":    &f.Agent,
+		"audience": &f.Audience,
+		"summary":  &f.Summary,
+		"content":  &f.Content,
 	}); err != nil {
 		failJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Audience is required: every piece of feedback states who it tries to
+	// improve things for — "agent" (API/workflow ergonomics) or "user" (UI/UX).
+	switch f.Audience {
+	case "agent", "user":
+		// ok
+	case "":
+		failJSON(w, http.StatusBadRequest, `field "audience" is required and must be "agent" or "user"`)
+		return
+	default:
+		failJSON(w, http.StatusBadRequest, `field "audience" must be "agent" or "user"`)
 		return
 	}
 	if fields["rating"] != nil {
@@ -158,10 +176,15 @@ func (s *server) handleCreateFeedback(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, f)
 }
 
-// handleListFeedback implements GET /api/v1/feedback (?agent=&ticket=&limit=).
+// handleListFeedback implements GET /api/v1/feedback (?agent=&audience=&ticket=&limit=).
 func (s *server) handleListFeedback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	agent := q.Get("agent")
+	audience := q.Get("audience")
+	if audience != "" && audience != "agent" && audience != "user" {
+		failJSON(w, http.StatusBadRequest, `audience must be "agent" or "user"`)
+		return
+	}
 	var ticket *int64
 	if raw := q.Get("ticket"); raw != "" {
 		v, err := strconv.ParseInt(raw, 10, 64)
@@ -181,7 +204,7 @@ func (s *server) handleListFeedback(w http.ResponseWriter, r *http.Request) {
 		limit = v
 	}
 
-	feedback, err := s.st.listFeedback(r.Context(), agent, ticket, limit)
+	feedback, err := s.st.listFeedback(r.Context(), agent, audience, ticket, limit)
 	if err != nil {
 		failJSON(w, http.StatusInternalServerError, err.Error())
 		return

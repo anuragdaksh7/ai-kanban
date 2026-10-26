@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { api } from '@/api'
 import { STATUSES } from '@/lib/statuses'
 import { copyText } from '@/util'
+import { buildTicketBody } from '@/lib/ticket-body'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -92,33 +93,7 @@ export default function TicketModal({ isNew, ticket, onClose, onSaved }) {
     setBusy(true)
     setFormError('')
     try {
-      const body = {
-        content: form.content,
-        agent: form.agent,
-        worktree: form.worktree,
-        tldr: form.tldr,
-        sessionCode: form.sessionCode,
-        decisionsPending: form.decisionsText
-          .split('\n')
-          .map((s) => s.trim())
-          .filter(Boolean),
-        metadata: form.metadataText.trim() ? JSON.parse(form.metadataText) : {},
-      }
-      if (form.issueNumber !== '') {
-        body.issueNumber = Number(form.issueNumber)
-        if (!Number.isInteger(body.issueNumber) || body.issueNumber <= 0) {
-          throw new Error('issue number must be a positive integer')
-        }
-      }
-      if (form.prNumber !== '') {
-        body.prNumber = Number(form.prNumber)
-        if (!Number.isInteger(body.prNumber) || body.prNumber <= 0) {
-          throw new Error('PR number must be a positive integer')
-        }
-      }
-      if (body.metadata && (typeof body.metadata !== 'object' || Array.isArray(body.metadata))) {
-        throw new Error('metadata must be a JSON object')
-      }
+      const body = buildTicketBody(form)
 
       if (isNew) {
         await api.createTicket({ ...body, status: form.status })
@@ -281,7 +256,7 @@ export default function TicketModal({ isNew, ticket, onClose, onSaved }) {
               className="font-mono text-xs"
               value={form.metadataText}
               onChange={(e) => set('metadataText', e.target.value)}
-              placeholder='{"branch": "fix/login"}'
+              placeholder='{"branch": "user/anurag/2434", "commits": ["8a55cfaf1"], "pr": "https://github.com/org/repo/pull/2440", "relatedPr": 2423, "reviewedBy": "review-code 8a55cfaf1 round=1 verdict=PASS", "followups": ["#2438"]}'
             />
           </div>
 

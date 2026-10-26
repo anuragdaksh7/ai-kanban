@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils'
 export default function FeedbackView({ tickets }) {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('all') // all | agent | user
   const [composing, setComposing] = useState(false)
 
   const load = useCallback(async () => {
@@ -45,13 +46,21 @@ export default function FeedbackView({ tickets }) {
   }, [load])
 
   const ticketLookup = new Map(tickets.map((t) => [t.id, t]))
+  const counts = {
+    all: entries.length,
+    agent: entries.filter((f) => f.audience === 'agent').length,
+    user: entries.filter((f) => f.audience === 'user').length,
+  }
+  const visible = entries.filter((f) => filter === 'all' || f.audience === filter)
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-3">
       <div className="flex items-center gap-2.5">
         <span className="flex-1 text-xs text-muted-foreground">
-          Feedback from agent sessions — what could make this platform better.
-          Agents are nudged to submit it when they create a ticket or complete their work.
+          <strong className="font-semibold text-foreground">Agent feedback</strong> wants a more
+          usable API and workflow; <strong className="font-semibold text-foreground">user
+          feedback</strong> wants better UI and experience. Agents are nudged to submit both when
+          they create a ticket or complete their work.
         </span>
         <Button variant="outline" size="sm" onClick={load} title="Refresh now (auto every 20s)">
           <RefreshCw />
@@ -63,18 +72,39 @@ export default function FeedbackView({ tickets }) {
         </Button>
       </div>
 
+      <div className="flex items-center gap-1.5">
+        {[
+          { key: 'all', label: 'All' },
+          { key: 'agent', label: 'Agent' },
+          { key: 'user', label: 'User' },
+        ].map((tab) => (
+          <Button
+            key={tab.key}
+            variant="ghost"
+            size="sm"
+            onClick={() => setFilter(tab.key)}
+            className={cn('px-2.5', filter === tab.key && 'bg-secondary text-secondary-foreground')}
+          >
+            {tab.label}
+            <span className="text-[10.5px] text-muted-foreground">{counts[tab.key]}</span>
+          </Button>
+        ))}
+      </div>
+
       {loading ? (
         <div className="py-16 text-center text-sm text-muted-foreground">Loading feedback…</div>
-      ) : entries.length === 0 ? (
+      ) : visible.length === 0 ? (
         <div className="py-16 text-center text-sm text-muted-foreground">
-          No feedback yet. Agents will be asked for it when their sessions start or complete —
-          or submit some yourself.
+          {filter === 'all'
+            ? 'No feedback yet. Agents will be asked for it when their sessions start or complete — or submit some yourself.'
+            : `No ${filter}-audience feedback yet.`}
         </div>
       ) : (
-        entries.map((f) => (
+        visible.map((f) => (
           <Card key={f.id} className="gap-0 px-4 py-3.5 shadow-none">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-xs font-semibold text-sky-400">{f.agent || 'unknown'}</span>
+              <AudienceBadge audience={f.audience} />
               {f.rating ? <RatingStars rating={f.rating} /> : null}
               {f.ticketId ? (
                 <Badge variant="outline" className="px-1.5 font-normal text-[11px]">
@@ -122,8 +152,35 @@ export function RatingStars({ rating }) {
   )
 }
 
+const audienceStyles = {
+  agent: 'border-blue-400/40 text-blue-400',
+  user: 'border-purple-400/40 text-purple-400',
+}
+const audienceLabels = {
+  agent: 'agent — API / workflow',
+  user: 'user — UI / UX',
+}
+
+export function AudienceBadge({ audience }) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn('px-1.5 text-[11px]', audienceStyles[audience] ?? 'text-muted-foreground')}
+      title={
+        audience === 'agent'
+          ? 'Agent feedback: making the platform more usable for agent sessions'
+          : audience === 'user'
+            ? 'User feedback: making the interface and experience better for people'
+            : 'Unspecified audience (legacy entry)'
+      }
+    >
+      {audienceLabels[audience] ?? 'unspecified audience'}
+    </Badge>
+  )
+}
+
 function FeedbackComposer({ onClose, onSaved }) {
-  const [form, setForm] = useState({ agent: '', summary: '', content: '', rating: '', ticketId: '' })
+  const [form, setForm] = useState({ agent: '', audience: '', summary: '', content: '', rating: '', ticketId: '' })
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState('')
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
@@ -133,8 +190,12 @@ function FeedbackComposer({ onClose, onSaved }) {
     setBusy(true)
     setFormError('')
     try {
+      if (form.audience !== 'agent' && form.audience !== 'user') {
+        throw new Error('pick an audience: agent (API/workflow) or user (UI/UX)')
+      }
       const body = {
         agent: form.agent,
+        audience: form.audience,
         summary: form.summary,
         content: form.content,
       }
@@ -168,6 +229,27 @@ function FeedbackComposer({ onClose, onSaved }) {
           <DialogDescription>Feedback about this platform, from the user or an agent.</DialogDescription>
         </DialogHeader>
         <form onSubmit={save} className="grid gap-3.5">
+          <div className="grid gap-1.5">
+            <Label>Audience</Label>
+            <div className="flex gap-1.5">
+              {[
+                { key: 'agent', label: 'Agent', hint: 'API / workflow ergonomics' },
+                { key: 'user', label: 'User', hint: 'UI / UX for people' },
+              ].map((opt) => (
+                <Button
+                  key={opt.key}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  title={opt.hint}
+                  onClick={() => set('audience', opt.key)}
+                  className={cn('flex-1', form.audience === opt.key && 'border-ring bg-accent text-accent-foreground')}
+                >
+                  {opt.label}
+                </Button>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="fb-agent">Agent</Label>

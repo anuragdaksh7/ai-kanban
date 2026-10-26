@@ -43,7 +43,7 @@ Flags: `--port` (8787), `--host` (127.0.0.1), `--db` (`data/kanban.db`),
 | `status` | enum | `unstarted`, `started`, `stopped`, `completed`, `finished` |
 | `decisionsPending` | string[] | decisions awaiting the user |
 | `tldr` | string | one-liner shown as the card title |
-| `metadata` | JSON object | arbitrary, agent-dictated (branch, commits, …) |
+| `metadata` | JSON object | arbitrary, agent-dictated — blessed keys below |
 | `sessionCode` | string | the agent session id — copy button resumes it |
 | `createdAt` / `updatedAt` | string | RFC3339 |
 
@@ -65,6 +65,29 @@ Flags: `--port` (8787), `--host` (127.0.0.1), `--db` (`data/kanban.db`),
 - Unknown top-level fields are rejected with a list of valid fields (typo,
   snake_case, etc. get a clear error).
 
+### Metadata vocabulary
+
+Agents log richer context in metadata so the UI can render it as structured
+detail rows (branch chips, clickable commit hashes, PR/issue links, colored
+review verdicts) instead of untyped text:
+
+| key           | type             | meaning |
+|---------------|------------------|---------|
+| `branch`      | string           | branch this session works on |
+| `commits`     | array of strings | commit hashes, one per string |
+| `pr`          | string (URL)     | the PR opened for this work |
+| `githubIssue` | string (URL)     | the issue driving this work |
+| `relatedPr`   | number           | another PR relevant to the ticket |
+| `reviewedBy`  | string           | review verdict, e.g. `review-code 0d4cbb70c round=2 verdict=PASS` |
+| `followups`   | array of strings | issue/PR references left for later, e.g. `#2438` |
+
+- Rule of thumb: **identifiers and links go in metadata; the report body stays
+  prose.**
+- Extra keys are allowed (free-form); any string that looks like a URL
+  renders as a clickable link.
+- Keys duplicating the ticket's own fields (`worktree`, `sessionCode`) are
+  hidden as redundant in the drawer.
+
 ## API
 
 Base: `http://localhost:8787/api/v1`. All bodies are JSON.
@@ -78,8 +101,14 @@ Base: `http://localhost:8787/api/v1`. All bodies are JSON.
 | `GET /tickets/{id}` | fetch one (404 if unknown) |
 | `PATCH /tickets/{id}` | partial update (also accepted as `PUT`) |
 | `POST /tickets/{id}/finish` | user-only: move to `finished` (idempotent) |
-| `POST /feedback` | agent feedback about the platform (`agent, summary, content, rating 1-5, ticketId`) |
-| `GET /feedback` | list feedback (`?agent=&ticket=&limit=`) |
+| `POST /feedback` | feedback about the platform (`agent, audience "agent"\|"user" (required), summary, content, rating 1-5, ticketId`) |
+| `GET /feedback` | list feedback (`?agent=&audience=&ticket=&limit=`) |
+
+**Feedback audiences**: every entry states who it tries to help. `audience:
+"agent"` is ergonomics for agent sessions (missing API fields, validation,
+ensure/resume behavior); `audience: "user"` is about the human side (UI layout,
+readability, board workflow). The Feedback page filters by audience, and legacy
+entries logged before the field existed default to `agent`.
 
 **Agent feedback nudges**: the response to ticket creation and to a
 transition into `completed` carries a `requestFeedback` string — agents are
@@ -113,7 +142,7 @@ curl -s -X PATCH http://localhost:8787/api/v1/tickets/1 \
     "tldr": "OAuth redirect fixed, needs user review",
     "content": "State was signed with the stale secret after key rotation. Fixed with grace window.",
     "decisionsPending": ["Keep the 10-min grace window hardcoded?"],
-    "metadata": {"commits": 3, "branch": "fix/login-42"}
+    "metadata": {"commits": ["8a55cfaf1"], "branch": "fix/login-42"}
   }'
 ```
 
@@ -123,9 +152,12 @@ Never: `POST /api/v1/tickets/{id}/finish` (that is the user's job).
 
 - **Board** and **Feedback** pages (switch via the toolbar buttons).
 - Drag cards between columns (dragging to Finished calls the finish endpoint).
-- Click a card to open it and edit every field, including metadata JSON.
+- Click a card to open the detail drawer (GitHub-style) with structured
+  key details, the report rendered as markdown-lite, and an Edit mode that
+  touches every field including metadata JSON.
 - `⧉ session` copies the session code so you can run `claude --resume <code>`.
-- The Feedback page lists agent feedback (auto-refreshes) and has a
+- The Feedback page lists feedback split into **Agent** (API/workflow) and
+  **User** (UI/UX) audiences, filterable by tab (auto-refreshes), and has a
   "Submit feedback" form for anything you want to note yourself.
 - The board polls every 15 s (and on focus) so agent changes show up live.
 

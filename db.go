@@ -72,6 +72,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			id         INTEGER PRIMARY KEY AUTOINCREMENT,
 			ticket_id  INTEGER,
 			agent      TEXT NOT NULL DEFAULT '',
+			audience   TEXT NOT NULL DEFAULT '',
 			summary    TEXT NOT NULL DEFAULT '',
 			content    TEXT NOT NULL DEFAULT '',
 			rating     INTEGER,
@@ -85,6 +86,49 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("exec %q: %w", firstWords(stmt, 4), err)
 		}
+	}
+	// Existing databases predate the audience column; add it and classify the
+	// legacy rows — all feedback submitted before the field existed was
+	// agent-ergonomics commentary.
+	if err := ensureFeedbackAudience(ctx, db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureFeedbackAudience(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(feedback)`)
+	if err != nil {
+		return fmt.Errorf("pragma feedback: %w", err)
+	}
+	hasAudience := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan pragma feedback: %w", err)
+		}
+		if name == "audience" {
+			hasAudience = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if !hasAudience {
+		if _, err := db.ExecContext(ctx,
+			`ALTER TABLE feedback ADD COLUMN audience TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add feedback.audience: %w", err)
+		}
+	}
+	if _, err := db.ExecContext(ctx,
+		`UPDATE feedback SET audience = 'agent' WHERE audience = ''`); err != nil {
+		return fmt.Errorf("backfill feedback.audience: %w", err)
 	}
 	return nil
 }
